@@ -498,19 +498,25 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             int oldCapacity = oldTable.length;
             int newCapacity = oldCapacity << 1;
             threshold = (int)(newCapacity * loadFactor);
+            // 初始化一个新的HashEntry
             HashEntry<K,V>[] newTable =
                 (HashEntry<K,V>[]) new HashEntry[newCapacity];
             int sizeMask = newCapacity - 1;
+
+            // 循环遍历旧的HashEntry数组
             for (int i = 0; i < oldCapacity ; i++) {
                 HashEntry<K,V> e = oldTable[i];
                 if (e != null) {
                     HashEntry<K,V> next = e.next;
+                    // 当前节点在新数组中的下标
                     int idx = e.hash & sizeMask;
+                    // 原数组中的当前下标对应的链表中只有一个元素，则直接将该元素赋值给新数组中的idx下标
                     if (next == null)   //  Single node on list
                         newTable[idx] = e;
                     else { // Reuse consecutive sequence at same slot
                         HashEntry<K,V> lastRun = e;
                         int lastIdx = idx;
+                        // 求出旧数组中当前下标对应的链表中最后一段需要被复制到新数组中相同链表中的节点，这样最后一批节点(lastRun及以后的节点)可以一次性的移过去
                         for (HashEntry<K,V> last = next;
                              last != null;
                              last = last.next) {
@@ -522,6 +528,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                         }
                         newTable[lastIdx] = lastRun;
                         // Clone remaining nodes
+                        // 将链表中lastRun节点之前的节点移动到新数组对应的链表中
                         for (HashEntry<K,V> p = e; p != lastRun; p = p.next) {
                             V v = p.value;
                             int h = p.hash;
@@ -532,6 +539,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                     }
                 }
             }
+            // 将刚刚需要被添加的元素添加到新的数组中
             int nodeIndex = node.hash & sizeMask; // add the new node
             node.setNext(newTable[nodeIndex]);
             newTable[nodeIndex] = node;
@@ -549,18 +557,24 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
          * @return a new node if key not found, else null
          */
         private HashEntry<K,V> scanAndLockForPut(K key, int hash, V value) {
+            // 获取当前hash值在当前Segment中对应的HashEntry链表
             HashEntry<K,V> first = entryForHash(this, hash);
             HashEntry<K,V> e = first;
             HashEntry<K,V> node = null;
             int retries = -1; // negative while locating node
+
+            // 再次尝试获取锁
             while (!tryLock()) {
                 HashEntry<K,V> f; // to recheck first below
                 if (retries < 0) {
+                    // 如果遍历到最后依旧没有找到key相同的HashEntry
                     if (e == null) {
+                        // 如果还没有为当前节点创建过HashEntry
                         if (node == null) // speculatively create node
                             node = new HashEntry<K,V>(hash, key, value, null);
                         retries = 0;
                     }
+                    // 没有获取到锁,但是在当前链表中遍历到与当前key相等的HashEntry相等的节点
                     else if (key.equals(e.key))
                         retries = 0;
                     else
@@ -570,6 +584,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                     lock();
                     break;
                 }
+                // 当retries的次数是偶数时，还会检查当前链表是否有改变过，如果改变过则需要重新设置retries为-1，重新检查是否存在key相同的节点
                 else if ((retries & 1) == 0 &&
                          (f = entryForHash(this, hash)) != first) {
                     e = first = f; // re-traverse if entry changed
@@ -738,17 +753,22 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         final Segment<K,V>[] ss = this.segments;
         long u = (k << SSHIFT) + SBASE; // raw offset
         Segment<K,V> seg;
+        // 在创建之前，再做一次检查
         if ((seg = (Segment<K,V>)UNSAFE.getObjectVolatile(ss, u)) == null) {
             Segment<K,V> proto = ss[0]; // use segment 0 as prototype
             int cap = proto.table.length;
             float lf = proto.loadFactor;
             int threshold = (int)(cap * lf);
             HashEntry<K,V>[] tab = (HashEntry<K,V>[])new HashEntry[cap];
+
+            // 由于创建一个Segmnet对象是一个耗时的操作，需要再进行一次检查，避免不必要的对象创建
             if ((seg = (Segment<K,V>)UNSAFE.getObjectVolatile(ss, u))
                 == null) { // recheck
                 Segment<K,V> s = new Segment<K,V>(lf, threshold, tab);
+                // 创建完在进行CAS之前，再一次检查
                 while ((seg = (Segment<K,V>)UNSAFE.getObjectVolatile(ss, u))
                        == null) {
+                    // 返回true表示创建成功，返回false表示创建失败，创建失败意味着已经有线程在该位置创建了Segment对象，直接返回即可
                     if (UNSAFE.compareAndSwapObject(ss, u, null, seg = s))
                         break;
                 }
@@ -798,6 +818,9 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * nonpositive.
      */
     @SuppressWarnings("unchecked")
+    // initialCapacity:HashEntry数组的大小,这里指的是所有的Segment下的HashEntry下的数组的总和
+    // loadFactor:
+    // concurrencyLevel:Segment数组的个数,Segment是不会进行扩容的
     public ConcurrentHashMap(int initialCapacity,
                              float loadFactor, int concurrencyLevel) {
         if (!(loadFactor > 0) || initialCapacity < 0 || concurrencyLevel <= 0)
@@ -805,27 +828,41 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         if (concurrencyLevel > MAX_SEGMENTS)
             concurrencyLevel = MAX_SEGMENTS;
         // Find power-of-two sizes best matching arguments
+        // ssize的值为2的sshift次幂
         int sshift = 0;
+        // ssize:根据用户传入的concurrencyLevel计算出真实的Segment数组的大小：大于等于concurrencyLevel的最小的2次幂
         int ssize = 1;
         while (ssize < concurrencyLevel) {
             ++sshift;
             ssize <<= 1;
         }
+        // Segment数组的长度如果是16,表示为2的4次方，那么该值为28，在put时计算Entry属于哪个Segment时，hash值会左移segmentShift位
+        // 原因：防止Segment数组的大小和Segment下的HashEntry数组的大小一样，由于采用的hash值是一样的，不左移就会导致当前Segment下的HashEntry数组中只有一个位置会存放Entry
         this.segmentShift = 32 - sshift;
         this.segmentMask = ssize - 1;
         if (initialCapacity > MAXIMUM_CAPACITY)
             initialCapacity = MAXIMUM_CAPACITY;
+
+
         int c = initialCapacity / ssize;
         if (c * ssize < initialCapacity)
             ++c;
+
+        // cap:每一个Segmnet数组中的HashEntry数组的初始长度，该值的计算规则为大于等于initialCapacity / ssize的最小的2次幂值
         int cap = MIN_SEGMENT_TABLE_CAPACITY;
         while (cap < c)
             cap <<= 1;
         // create segments and segments[0]
+        // 新建Segment对象，放入Segment数组的第0个位置，为什么需要初始化第0个元素?
+        // 为了保存已经计算好的cap值，不然每次都需要计算一次，下次再创建Segment[2]时，就可以直接使用Segment[0]中的值了，原型模式
         Segment<K,V> s0 =
             new Segment<K,V>(loadFactor, (int)(cap * loadFactor),
                              (HashEntry<K,V>[])new HashEntry[cap]);
+        // 初始化Segment数组
         Segment<K,V>[] ss = (Segment<K,V>[])new Segment[ssize];
+
+        // 为什么不直接ss[0] = s0?
+        // 因为上面的修改还是修改的线程工作内存中的引用,什么时候刷新到主内存中不一定，使用UNSAFE会直接修改主内存中的数组元素引用
         UNSAFE.putOrderedObject(ss, SBASE, s0); // ordered write of segments[0]
         this.segments = ss;
     }
@@ -1117,16 +1154,23 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
      *         <tt>null</tt> if there was no mapping for <tt>key</tt>
      * @throws NullPointerException if the specified key or value is null
      */
+    @Override
     @SuppressWarnings("unchecked")
     public V put(K key, V value) {
         Segment<K,V> s;
         if (value == null)
             throw new NullPointerException();
         int hash = hash(key);
+        // 左移计算Segment数组下标，防止在Segment数组和HashEntry数组长度一样时，Segment元素下的HashEntry数组中只有一个位置有数据
         int j = (hash >>> segmentShift) & segmentMask;
+
+        // 获取第j个Segment元素
         if ((s = (Segment<K,V>)UNSAFE.getObject          // nonvolatile; recheck
              (segments, (j << SSHIFT) + SBASE)) == null) //  in ensureSegment
+            // 如果第j个segment对象为null,那么需要新键一个Segment对象
             s = ensureSegment(j);
+
+        // 往segment中添加一个Entry
         return s.put(key, hash, value, false);
     }
 

@@ -300,6 +300,9 @@ public class HashMap<K,V>
 
     private static int roundUpToPowerOf2(int number) {
         // assert number >= 0 : "number must be non-negative";
+        // Integer.highestOneBit获取小于等于某个数的最大的2次幂,例如15就返回8,16就返回16、
+
+        // roundUpToPowerOf2需要返回的是大于等于某个数的最小的2次幂
         return number >= MAXIMUM_CAPACITY
                 ? MAXIMUM_CAPACITY
                 : (number > 1) ? Integer.highestOneBit((number - 1) << 1) : 1;
@@ -312,6 +315,7 @@ public class HashMap<K,V>
         // Find a power of 2 >= toSize
         int capacity = roundUpToPowerOf2(toSize);
 
+        // threshold不一定是capacity*loadFactor,还有可能是MAXIMUM_CAPACITY + 1
         threshold = (int) Math.min(capacity * loadFactor, MAXIMUM_CAPACITY + 1);
         table = new Entry[capacity];
         initHashSeedAsNeeded(capacity);
@@ -489,8 +493,11 @@ public class HashMap<K,V>
         }
         if (key == null)
             return putForNullKey(value);
+        // 此处并不是简单的获取hashcode,而是会进行一系列的位移操作，原因：因为计算数组下标时使用的是&运算，对计算结果有影响的只是后面几位，为了降低冲突，需要将高位进行一些运算，混淆一下低位
         int hash = hash(key);
         int i = indexFor(hash, table.length);
+
+        // 此处的遍历是查看当前hashmap中是否已经存在key相同的元素，如果有的话，就不需要再插入Entry，直接修改value即可
         for (Entry<K,V> e = table[i]; e != null; e = e.next) {
             Object k;
             if (e.hash == hash && ((k = e.key) == key || key.equals(k))) {
@@ -502,6 +509,7 @@ public class HashMap<K,V>
         }
 
         modCount++;
+        // 走到这一步，说明当前hashMap中没有key相同的Entry，因此需要插入Entry
         addEntry(hash, key, value, i);
         return null;
     }
@@ -572,12 +580,15 @@ public class HashMap<K,V>
     void resize(int newCapacity) {
         Entry[] oldTable = table;
         int oldCapacity = oldTable.length;
+        // 先根据oldCapacity判断是否还可以继续扩容
         if (oldCapacity == MAXIMUM_CAPACITY) {
             threshold = Integer.MAX_VALUE;
             return;
         }
 
+        // 创建新的数组
         Entry[] newTable = new Entry[newCapacity];
+        // 将旧Entry数组中的元素移动到新Entry数组中
         transfer(newTable, initHashSeedAsNeeded(newCapacity));
         table = newTable;
         threshold = (int)Math.min(newCapacity * loadFactor, MAXIMUM_CAPACITY + 1);
@@ -588,6 +599,7 @@ public class HashMap<K,V>
      */
     void transfer(Entry[] newTable, boolean rehash) {
         int newCapacity = newTable.length;
+        // 双重循环，外层循环：Entry数组，内层循环：Entry数组中的元素对应的链表
         for (Entry<K,V> e : table) {
             while(null != e) {
                 Entry<K,V> next = e.next;
@@ -875,12 +887,16 @@ public class HashMap<K,V>
      * Subclass overrides this to alter the behavior of put method.
      */
     void addEntry(int hash, K key, V value, int bucketIndex) {
+        // 此处判断是否需要扩容，扩容的条件
+        // 1. hashmap中Entry的个数大于threshold，2. 当前需要插入的Entry所在的数组元素目前还未有其它元素
         if ((size >= threshold) && (null != table[bucketIndex])) {
+            // 执行扩容操作,每次扩容的大小为先前数组的2倍
             resize(2 * table.length);
             hash = (null != key) ? hash(key) : 0;
             bucketIndex = indexFor(hash, table.length);
         }
 
+        // 插入Entry
         createEntry(hash, key, value, bucketIndex);
     }
 
