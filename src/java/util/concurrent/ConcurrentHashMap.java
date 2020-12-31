@@ -429,16 +429,21 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         }
 
         final V put(K key, int hash, V value, boolean onlyIfAbsent) {
+            // 获取锁,首先调用的是tryLock方法尝试直接获取锁，如果tryLock加锁失败则调用scanAndLockForPut
+            // 在scanAndLockForPut方法中如果tryLock加锁失败，会先尝试执行一个耗时任务：根据kv创建一个HashEntry对象,这样获取到锁后就不需要执行创建对象的逻辑了
             HashEntry<K,V> node = tryLock() ? null :
                 scanAndLockForPut(key, hash, value);
             V oldValue;
             try {
                 HashEntry<K,V>[] tab = table;
                 int index = (tab.length - 1) & hash;
+                // 获取HashEntry链表
                 HashEntry<K,V> first = entryAt(tab, index);
+                // 遍历当前链表
                 for (HashEntry<K,V> e = first;;) {
                     if (e != null) {
                         K k;
+                        // 如果存在与当前插入的key一样的节点,直接修改原节点的value值
                         if ((k = e.key) == key ||
                             (e.hash == hash && key.equals(k))) {
                             oldValue = e.value;
@@ -451,15 +456,19 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                         e = e.next;
                     }
                     else {
+                        // node!=null,说明在scanAndLockForPut获取锁之前创建了节点.此时只需要通过头插法将节点插入即可
                         if (node != null)
                             node.setNext(first);
                         else
                             node = new HashEntry<K,V>(hash, key, value, first);
+                        // 插入后根据Segment中HashEntry元素的个数决定是否需要扩容
                         int c = count + 1;
+                        // 扩容条件与jdk7 HashMap有一些不一样,hashmap中还会判断当前下标处的链表是否为null
                         if (c > threshold && tab.length < MAXIMUM_CAPACITY)
                             rehash(node);
                         else
                             setEntryAt(tab, index, node);
+                        // 增加modcount值
                         ++modCount;
                         count = c;
                         oldValue = null;
